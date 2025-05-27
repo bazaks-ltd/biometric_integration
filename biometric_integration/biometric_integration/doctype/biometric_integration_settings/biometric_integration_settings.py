@@ -27,50 +27,36 @@ def sync_attendance():
         end_time = datetime.strptime(settings.end_date_and_time, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%dT%H:%M:%S+08:00')
 
         headers = {"Content-Type": "application/json"}
-
-        # Initial fetch to determine total records
-        payload = {
-            "AcsEventCond": {
-                "searchID": "123456789",
-                "searchResultPosition": 0,
-                "maxResults": 1,
-                "major": 5,
-                "minor": 75,
-                "startTime": start_time,
-                "endTime": end_time
-            }
-        }
-
-        response = requests.post(
-            url,
-            auth=HTTPDigestAuth(settings.username, decrypted_password),
-            headers=headers,
-            json=payload,
-            verify=False,
-            timeout=600  # Set a higher timeout value (e.g., 600 seconds)
-        )
-
-        if response.status_code != 200:
-            frappe.throw(f"Failed to fetch attendance logs. Status: {response.status_code}, Response: {response.text}")
-
-        data = response.json()
-        total_records = data.get("AcsEvent", {}).get("totalMatches", 0)
-
-        if total_records == 0:
-            return "No attendance records found for the given time period."
         
-        if total_records > 1500:
-            return "Too many records to process. Please reduce the date range and try again."
-
+        # Specify the minor codes we want to fetch
+        target_minor_codes = [38, 75]
+        
         count = 0  # To count successfully synced records
         skipped = 0  # To count skipped duplicates
-        position = 0
-        batch_size = 30
+        total_processed = 0
+        
         frappe.publish_progress(0, title='Attendance Sync', description='Starting attendance sync...')
 
-        while True:
-            payload["AcsEventCond"]["searchResultPosition"] = position
-            payload["AcsEventCond"]["maxResults"] = batch_size
+        # Process each minor code separately
+        for minor_code in target_minor_codes:
+            frappe.publish_progress(
+                (target_minor_codes.index(minor_code) / len(target_minor_codes)) * 50, 
+                title='Attendance Sync', 
+                description=f'Processing minor code {minor_code}...'
+            )
+            
+            # Initial fetch to determine total records for this minor code
+            payload = {
+                "AcsEventCond": {
+                    "searchID": f"123456789_{minor_code}",  # Unique searchID for each minor code
+                    "searchResultPosition": 0,
+                    "maxResults": 1,
+                    "major": 5,
+                    "minor": minor_code,  # Specify the exact minor code
+                    "startTime": start_time,
+                    "endTime": end_time
+                }
+            }
 
             response = requests.post(
                 url,
@@ -78,77 +64,126 @@ def sync_attendance():
                 headers=headers,
                 json=payload,
                 verify=False,
-                timeout=600  # Set a higher timeout value (e.g., 600 seconds)
+                timeout=600
             )
 
             if response.status_code != 200:
-                frappe.publish_progress(100, title='Attendance Sync', description=f"Failed to fetch attendance logs. Status: {response.status_code}")
-                frappe.throw(f"Failed to fetch attendance logs. Status: {response.status_code}, Response: {response.text}")
+                frappe.throw(f"Failed to fetch attendance logs for minor code {minor_code}. Status: {response.status_code}, Response: {response.text}")
 
             data = response.json()
-            events = data.get("AcsEvent", {}).get("InfoList", [])
+            total_records_for_minor = data.get("AcsEvent", {}).get("totalMatches", 0)
 
-            if not events:
-                break
+            if total_records_for_minor == 0:
+                print(f"No attendance records found for minor code {minor_code}")
+                continue
+            
+            if total_records_for_minor > 1500:
+                frappe.throw(f"Too many records ({total_records_for_minor}) for minor code {minor_code}. Please reduce the date range and try again.")
 
-            for log in events:
-                emp_no = log.get('employeeNoString')
-                event_timestamp = log.get('time', '')
-                if not emp_no or not event_timestamp:
-                    continue
-                # Convert device time format to Frappe format
-                event_datetime = datetime.strptime(event_timestamp[:19], '%Y-%m-%dT%H:%M:%S')
-                # Create or get Attendance Log doc for employee and date
-                attendance_log = frappe.get_all('Biometric Attendance Log', filters={
-                    'employee_no': emp_no,
-                    'event_date': event_datetime.date()
-                }, limit_page_length=1)
-                if attendance_log:
-                    doc = frappe.get_doc('Biometric Attendance Log', attendance_log[0].name)
-                else:
-                    doc = frappe.new_doc("Biometric Attendance Log")
-                    doc.employee_no = emp_no
-                    doc.event_date = event_datetime.date()
-                # Check if the punch time already exists in the child table (punch_table) for the same employee and date
-                existing_punch = frappe.db.sql("""
-                    SELECT COUNT(*) 
-                    FROM `tabBiometric Attendance Punch Table`
-                    WHERE parent = %(parent)s
-                    AND punch_time = %(punch_time)s
-                """, {
-                    "parent": doc.name,
-                    "punch_time": event_datetime.time()
-                })[0][0] > 0
-                if not existing_punch:
-                    # Create a new punch entry in the child table with punch_type set to "Auto"
-                    doc.append('punch_table', {
-                        'punch_time': event_datetime.time(),  # Only time part
-                        'punch_type': 'Auto'  # Set punch type as Auto for device punches
-                    })
-                    try:
-                        doc.save(ignore_permissions=True)
-                        count += 1
-                    except Exception as e:
-                        print(f"Insert failed for employee {emp_no}: {str(e)}")
+            # Process records for this minor code in batches
+            position = 0
+            batch_size = 30
+
+            while True:
+                payload["AcsEventCond"]["searchResultPosition"] = position
+                payload["AcsEventCond"]["maxResults"] = batch_size
+
+                response = requests.post(
+                    url,
+                    auth=HTTPDigestAuth(settings.username, decrypted_password),
+                    headers=headers,
+                    json=payload,
+                    verify=False,
+                    timeout=600
+                )
+
+                if response.status_code != 200:
+                    frappe.publish_progress(100, title='Attendance Sync', description=f"Failed to fetch attendance logs for minor code {minor_code}. Status: {response.status_code}")
+                    frappe.throw(f"Failed to fetch attendance logs for minor code {minor_code}. Status: {response.status_code}, Response: {response.text}")
+
+                data = response.json()
+                events = data.get("AcsEvent", {}).get("InfoList", [])
+
+                if not events:
+                    break
+
+                for log in events:
+                    # No need to check minor code since we're fetching specific ones
+                    emp_no = log.get('employeeNoString')
+                    event_timestamp = log.get('time', '')
+                    
+                    if not emp_no or not event_timestamp:
                         continue
-                else:
-                    skipped += 1
-                    print(f"Punch for employee {emp_no} at {event_datetime.time()} already exists.")
-            position += len(events)
+                        
+                    # Convert device time format to Frappe format
+                    event_datetime = datetime.strptime(event_timestamp[:19], '%Y-%m-%dT%H:%M:%S')
+                    
+                    # Create or get Attendance Log doc for employee and date
+                    attendance_log = frappe.get_all('Biometric Attendance Log', filters={
+                        'employee_no': emp_no,
+                        'event_date': event_datetime.date()
+                    }, limit_page_length=1)
+                    
+                    if attendance_log:
+                        doc = frappe.get_doc('Biometric Attendance Log', attendance_log[0].name)
+                    else:
+                        doc = frappe.new_doc("Biometric Attendance Log")
+                        doc.employee_no = emp_no
+                        doc.event_date = event_datetime.date()
+                    
+                    # Check if the punch time already exists in the child table
+                    existing_punch = frappe.db.sql("""
+                        SELECT COUNT(*) 
+                        FROM `tabBiometric Attendance Punch Table`
+                        WHERE parent = %(parent)s
+                        AND punch_time = %(punch_time)s
+                    """, {
+                        "parent": doc.name,
+                        "punch_time": event_datetime.time()
+                    })[0][0] > 0
+                    
+                    if not existing_punch:
+                        # Create a new punch entry in the child table
+                        doc.append('punch_table', {
+                            'punch_time': event_datetime.time(),
+                            'punch_type': 'Auto'
+                        })
+                        
+                        try:
+                            doc.save(ignore_permissions=True)
+                            count += 1
+                        except Exception as e:
+                            print(f"Insert failed for employee {emp_no}: {str(e)}")
+                            continue
+                    else:
+                        skipped += 1
+                        print(f"Punch for employee {emp_no} at {event_datetime.time()} already exists.")
 
-            progress = (position / total_records) * 100
-            frappe.publish_progress(progress, title='Attendance Sync', description=f"Processed {position} of {total_records} records so far...")
+                position += len(events)
+                total_processed += len(events)
 
-            if len(events) < batch_size:
-                break
+                # Update progress based on current minor code processing
+                minor_progress = (position / total_records_for_minor) * 50
+                overall_progress = (target_minor_codes.index(minor_code) / len(target_minor_codes)) * 50 + (minor_progress / len(target_minor_codes))
+                
+                frappe.publish_progress(
+                    overall_progress, 
+                    title='Attendance Sync', 
+                    description=f"Processing minor code {minor_code}: {position}/{total_records_for_minor} records..."
+                )
+
+                if len(events) < batch_size:
+                    break
+
+            print(f"Completed processing minor code {minor_code}: {position} records processed")
 
         frappe.db.commit()
         frappe.publish_progress(100, title='Attendance Sync', description=f"{count} attendance records synced successfully. {skipped} duplicate punches skipped.")
-        return f"{count} attendance records synced successfully. {skipped} duplicate punches skipped."
+        return f"{count} attendance records synced successfully. {skipped} duplicate punches skipped. Total records processed: {total_processed}"
+        
     except Exception as e:
         frappe.publish_progress(100, title='Attendance Sync', description=f"Error syncing attendance: {str(e)}")
         frappe.throw(f"Error syncing attendance: {str(e)}")
-
 
 def scheduled_attendance_sync():
     try:
