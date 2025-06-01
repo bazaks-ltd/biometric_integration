@@ -48,9 +48,11 @@ def execute(filters=None):
     
     def natural_sort_key(emp):
         try:
+            if emp["attendance_device_id"] is None:
+                return 0
             return int(emp["attendance_device_id"])
         except ValueError:
-            return emp["attendance_device_id"]
+            return emp["attendance_device_id"] or "-"
     
     # Sort present employees by attendance_device_id (numeric)
     present_employees.sort(key=natural_sort_key)
