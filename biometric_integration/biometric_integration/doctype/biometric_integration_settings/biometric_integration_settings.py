@@ -16,6 +16,11 @@ import json
 
 @frappe.whitelist()
 def sync_attendance():
+    # Create sync log
+    sync_log = frappe.new_doc("Biometric Sync Log")
+    sync_log.sync_datetime = datetime.now()
+    sync_log.status = "In Progress"
+    sync_log.insert(ignore_permissions=True)
     try:
         # Fetch settings
         settings = frappe.get_doc('Biometric Integration Settings', 'Biometric Integration Settings')
@@ -25,6 +30,8 @@ def sync_attendance():
         # Convert Frappe datetime to device format (YYYY-MM-DDThh:mm:ss+08:00)
         start_time = datetime.strptime(settings.start_date_and_time, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%dT%H:%M:%S+08:00')
         end_time = datetime.strptime(settings.end_date_and_time, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%dT%H:%M:%S+08:00')
+        sync_log.start_time = settings.start_date_and_time
+        sync_log.end_time = settings.end_date_and_time
 
         headers = {"Content-Type": "application/json"}
         
@@ -176,12 +183,21 @@ def sync_attendance():
                     break
 
             print(f"Completed processing minor code {minor_code}: {position} records processed")
-
+        sync_log.status = "Success"
+        sync_log.total_processed = total_processed
+        sync_log.total_synced = count
+        sync_log.total_skipped = skipped
+        sync_log.save(ignore_permissions=True)
         frappe.db.commit()
         frappe.publish_progress(100, title='Attendance Sync', description=f"{count} attendance records synced successfully. {skipped} duplicate punches skipped.")
         return f"{count} attendance records synced successfully. {skipped} duplicate punches skipped. Total records processed: {total_processed}"
         
     except Exception as e:
+        print("sync failed")
+        sync_log.status = "Failed"
+        sync_log.error_message = str(e)
+        sync_log.save(ignore_permissions=True)
+        frappe.db.commit()
         frappe.publish_progress(100, title='Attendance Sync', description=f"Error syncing attendance: {str(e)}")
         frappe.throw(f"Error syncing attendance: {str(e)}")
 

@@ -1,0 +1,93 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-06-01 15:58:29.552443",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sync_datetime",
+  "start_time",
+  "end_time",
+  "status",
+  "total_processed",
+  "total_synced",
+  "total_skipped",
+  "error_message",
+  "details"
+ ],
+ "fields": [
+  {
+   "fieldname": "start_time",
+   "fieldtype": "Datetime",
+   "label": "Start Time"
+  },
+  {
+   "fieldname": "end_time",
+   "fieldtype": "Datetime",
+   "label": "End Time"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "In Progress\nSuccess\nFailed\nPartial"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_processed",
+   "fieldtype": "Int",
+   "label": "Total Processed"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_synced",
+   "fieldtype": "Int",
+   "label": "Total Synced"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_skipped",
+   "fieldtype": "Int",
+   "label": "Total Skipped"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Text",
+   "label": "Error Message"
+  },
+  {
+   "fieldname": "details",
+   "fieldtype": "Data",
+   "label": "Details"
+  },
+  {
+   "fieldname": "sync_datetime",
+   "fieldtype": "Datetime",
+   "label": "Date"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-06-01 17:10:44.141219",
+ "modified_by": "Administrator",
+ "module": "Biometric Integration",
+ "name": "Biometric Sync Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
